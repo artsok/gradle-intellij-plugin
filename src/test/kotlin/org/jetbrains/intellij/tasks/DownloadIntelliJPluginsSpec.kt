@@ -1,7 +1,8 @@
-package org.jetbrains.intellij
+package org.jetbrains.intellij.tasks
 
 import org.gradle.api.plugins.BasePlugin
 import org.gradle.internal.os.OperatingSystem
+import org.jetbrains.intellij.IntelliJPluginSpecBase
 import org.junit.Assume.assumeFalse
 import java.io.File
 import kotlin.test.BeforeTest
@@ -13,7 +14,8 @@ class DownloadIntelliJPluginsSpec : IntelliJPluginSpecBase() {
     private val pluginsRepositoryCacheDir = File(gradleHome, "caches/modules-2/files-2.1/com.jetbrains.plugins")
     private val pluginsNightlyRepositoryCacheDir = File(gradleHome, "caches/modules-2/files-2.1/nightly.com.jetbrains.plugins")
     private val pluginsCacheDir = File(gradleHome, "caches/modules-2/files-2.1/com.jetbrains.intellij.idea/unzipped.com.jetbrains.plugins")
-    private val pluginsNightlyCacheDir = File(gradleHome, "caches/modules-2/files-2.1/com.jetbrains.intellij.idea/unzipped.nightly.com.jetbrains.plugins")
+    private val pluginsNightlyCacheDir =
+        File(gradleHome, "caches/modules-2/files-2.1/com.jetbrains.intellij.idea/unzipped.nightly.com.jetbrains.plugins")
 
     @BeforeTest
     override fun setUp() {

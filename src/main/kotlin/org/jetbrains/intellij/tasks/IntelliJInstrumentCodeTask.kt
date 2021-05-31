@@ -1,5 +1,6 @@
 package org.jetbrains.intellij.tasks
 
+import groovy.lang.Closure
 import org.gradle.api.Incubating
 import org.gradle.api.file.DirectoryProperty
 import org.gradle.api.file.FileSystemOperations
@@ -18,7 +19,9 @@ import org.gradle.api.tasks.TaskAction
 import org.gradle.tooling.BuildException
 import org.jetbrains.intellij.IntelliJPluginConstants
 import org.jetbrains.intellij.IntelliJPluginExtension
+import org.jetbrains.intellij.create
 import org.jetbrains.intellij.dependency.IdeaDependency
+import org.jetbrains.intellij.info
 import org.jetbrains.intellij.releaseType
 import java.io.File
 import java.net.URI
@@ -66,10 +69,23 @@ open class IntelliJInstrumentCodeTask @Inject constructor(
     @OutputDirectory
     val outputDir: DirectoryProperty = objectFactory.directoryProperty()
 
+    @Transient
+    @Suppress("LeakingThis")
+    private val context = this
+
     @InputFiles
     fun getSourceDirs() = sourceSetAllDirs.get().filter {
         it.exists() && !sourceSetResources.get().contains(it)
     }
+
+    @Transient
+    private val dependencyHandler = project.dependencies
+
+    @Transient
+    private val repositoryHandler = project.repositories
+
+    @Transient
+    private val configurationContainer = project.configurations
 
     @TaskAction
     fun instrumentClasses() {
@@ -84,7 +100,7 @@ open class IntelliJInstrumentCodeTask @Inject constructor(
             "classname" to "com.intellij.ant.InstrumentIdeaExtensions",
         ))
 
-        logger.info("Compiling forms and instrumenting code with nullability preconditions")
+        info(context, "Compiling forms and instrumenting code with nullability preconditions")
         val instrumentNotNull = prepareNotNullInstrumenting(classpath)
         instrumentCode(getSourceDirs(), outputDir.get().asFile, instrumentNotNull)
     }
@@ -108,17 +124,21 @@ open class IntelliJInstrumentCodeTask @Inject constructor(
     } ?: compilerClassPathFromMaven()
 
     private fun compilerClassPathFromMaven(): List<File> {
-        val dependency = project.dependencies.create("com.jetbrains.intellij.java:java-compiler-ant-tasks:${compilerVersion.get()}")
+        val dependency = dependencyHandler.create(
+            group = "com.jetbrains.intellij.java",
+            name = "java-compiler-ant-tasks",
+            version = compilerVersion.get(),
+        )
         val intellijRepositoryUrl = extension?.intellijRepository?.get() ?: IntelliJPluginConstants.DEFAULT_INTELLIJ_REPOSITORY
         val repos = listOf(
-            project.repositories.maven { it.url = URI("$intellijRepositoryUrl/${releaseType(compilerVersion.get())}") },
-            project.repositories.maven { it.url = URI(ASM_REPOSITORY_URL) },
-            project.repositories.maven { it.url = URI(FORMS_REPOSITORY_URL) },
+            repositoryHandler.maven { it.url = URI("$intellijRepositoryUrl/${releaseType(compilerVersion.get())}") },
+            repositoryHandler.maven { it.url = URI(ASM_REPOSITORY_URL) },
+            repositoryHandler.maven { it.url = URI(FORMS_REPOSITORY_URL) },
         )
         try {
-            return project.configurations.detachedConfiguration(dependency).files.toList()
+            return configurationContainer.detachedConfiguration(dependency).files.toList()
         } finally {
-            project.repositories.removeAll(repos)
+            repositoryHandler.removeAll(repos)
         }
     }
 
@@ -142,8 +162,11 @@ open class IntelliJInstrumentCodeTask @Inject constructor(
         } catch (e: BuildException) {
             val cause = e.cause
             if (cause is ClassNotFoundException && FILTER_ANNOTATION_REGEXP_CLASS == cause.message) {
-                logger.info("Old version of Javac2 is used, " +
-                    "instrumenting code with nullability will be skipped. Use IDEA >14 SDK (139.*) to fix this")
+                info(
+                    context,
+                    "Old version of Javac2 is used, instrumenting code with nullability will be skipped. " +
+                        "Use IDEA >14 SDK (139.*) to fix this",
+                )
                 return false
             } else {
                 throw e
@@ -153,25 +176,44 @@ open class IntelliJInstrumentCodeTask @Inject constructor(
     }
 
     private fun instrumentCode(srcDirs: List<File>, outputDir: File, instrumentNotNull: Boolean) {
-        val headlessOldValue = System.setProperty("java.awt.headless", "true")
-        ant.invokeMethod("instrumentIdeaExtensions", mapOf(
-            "srcdir" to srcDirs.joinToString(":"),
-            "destdir" to outputDir,
-            "classpath" to sourceSetCompileClasspath.get().joinToString(":"),
-            "includeantruntime" to false,
-            "instrumentNotNull" to instrumentNotNull,
-        ))
-
-        if (instrumentNotNull) {
-            ant.invokeMethod("skip", mapOf(
-                "pattern" to "kotlin/Metadata"
-            ))
+        if (srcDirs.isEmpty()) {
+            return
         }
 
-        if (headlessOldValue != null) {
-            System.setProperty("java.awt.headless", headlessOldValue)
-        } else {
-            System.clearProperty("java.awt.headless")
+        val headlessOldValue = System.setProperty("java.awt.headless", "true")
+        try {
+            // Builds up the Ant XML:
+            // <instrumentIdeaExtensions srcdir="..." ...>
+            //    <skip pattern=".."/>
+            // </instrumentIdeaExtensions>
+
+            ant.invokeMethod("instrumentIdeaExtensions", arrayOf(
+                mapOf(
+                    "srcdir" to srcDirs.joinToString(":"),
+                    "destdir" to outputDir,
+                    "classpath" to sourceSetCompileClasspath.get().joinToString(":"),
+                    "includeantruntime" to false,
+                    "instrumentNotNull" to instrumentNotNull
+                ),
+                object : Closure<Any>(this, this) {
+                    @Suppress("unused") // Groovy calls using reflection inside of Closure
+                    fun doCall(): Any? {
+                        if (instrumentNotNull) {
+                            ant.invokeMethod("skip", mapOf(
+                                "pattern" to "kotlin/Metadata"
+                            ))
+                        }
+
+                        return null
+                    }
+                }
+            ))
+        } finally {
+            if (headlessOldValue != null) {
+                System.setProperty("java.awt.headless", headlessOldValue)
+            } else {
+                System.clearProperty("java.awt.headless")
+            }
         }
     }
 }

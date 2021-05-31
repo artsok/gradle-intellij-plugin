@@ -1,5 +1,8 @@
 name: Build
-on: [push, pull_request]
+on:
+  push:
+    branches: [master]
+  pull_request:
 
 jobs:
   gradleValidation:
@@ -8,10 +11,10 @@ jobs:
     steps:
 
       - name: Fetch Sources
-        uses: actions/checkout@v2
+        uses: actions/checkout@v2.3.4
 
       - name: Gradle Wrapper Validation
-        uses: gradle/wrapper-validation-action@v1.0.3
+        uses: gradle/wrapper-validation-action@v1.0.4
 
   codeInspection:
     name: Code Inspection
@@ -20,21 +23,94 @@ jobs:
     steps:
 
       - name: Fetch Sources
-        uses: actions/checkout@v2
+        uses: actions/checkout@v2.3.4
 
       - name: Qodana - Code Inspection
         uses: JetBrains/qodana-action@v2.0-eap
+
+  cacheIntolerantTest:
+    name: Cache Intolerant Test
+    needs: gradleValidation
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        testFile:
+          - "DownloadIntelliJSpec"
+        gradleVersion:
+          - 6.6
+          - 6.9
+          - 7.0.2
+        os:
+          - windows-latest
+          - ubuntu-latest
+          - macos-latest
+
+    steps:
+
+      - name: Setup Java
+        uses: actions/setup-java@v2
+        with:
+          distribution: zulu
+          java-version: 8
+
+      - name: Fetch Sources
+        uses: actions/checkout@v2.3.4
+
+      - name: Setup Gradle Dependencies Cache
+        uses: actions/cache@v2.1.6
+        with:
+          path: ~/.gradle/caches
+          key: ${{ runner.os }}-gradle-caches-${{ hashFiles('**/*.gradle', '**/*.gradle.kts', 'gradle.properties') }}
+
+      - name: Setup Gradle Wrapper Cache
+        uses: actions/cache@v2.1.6
+        with:
+          path: ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-wrapper-${{ hashFiles('**/gradle/wrapper/gradle-wrapper.properties') }}
+
+      - name: Run Linters and Test
+        run: ./gradlew cacheIntolerantTest --tests "*${{ matrix.testFile }}" -PtestGradleVersion="${{ matrix.gradleVersion }}"
+
+      - name: Collect Test Results
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v2
+        with:
+          name: test-results-${{ matrix.testFile }}-${{ matrix.gradleVersion }}-${{ runner.os }}
+          path: ${{ github.workspace }}/build/reports/tests/test/
 
   test:
     name: Test
     needs: gradleValidation
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
-        include:
-          - os: windows-latest
-          - os: ubuntu-latest
-          - os: macos-latest
+        testFile:
+          - "BuildPluginTaskSpec"
+          - "BuildSearchableOptionsTaskSpec"
+          - "DownloadIntelliJPluginsSpec"
+          - "DownloadRobotServerPluginTaskSpec"
+          - "IntelliJInstrumentCodeTaskSpec"
+          - "JarSearchableOptionsTaskSpec"
+          - "PatchPluginXmlTaskSpec"
+          - "PrepareSandboxTaskSpec"
+          - "ProcessResourcesTaskSpec"
+          - "PublishPluginTaskSpec"
+          - "RunPluginVerifierTaskSpec"
+          - "SignPluginTaskSpec"
+          - "VerifyPluginTaskSpec"
+          - "UtilsTest"
+          - "IntelliJPluginSpec"
+          - "IntelliJPluginManualConfigSpec"
+        gradleVersion:
+          - 6.6
+          - 6.9
+          - 7.0.2
+        os:
+          - windows-latest
+          - ubuntu-latest
+          - macos-latest
 
     steps:
 
@@ -45,51 +121,26 @@ jobs:
           java-version: 8
 
       - name: Fetch Sources
-        uses: actions/checkout@v2
+        uses: actions/checkout@v2.3.4
 
       - name: Setup Gradle Dependencies Cache
-        uses: actions/cache@v2.1.5
+        uses: actions/cache@v2.1.6
         with:
           path: ~/.gradle/caches
           key: ${{ runner.os }}-gradle-caches-${{ hashFiles('**/*.gradle', '**/*.gradle.kts', 'gradle.properties') }}
 
       - name: Setup Gradle Wrapper Cache
-        uses: actions/cache@v2.1.5
+        uses: actions/cache@v2.1.6
         with:
           path: ~/.gradle/wrapper
           key: ${{ runner.os }}-gradle-wrapper-${{ hashFiles('**/gradle/wrapper/gradle-wrapper.properties') }}
 
       - name: Run Linters and Test
-        run: ./gradlew test
+        run: ./gradlew test -x cacheIntolerantTest --tests "*${{ matrix.testFile }}" -PtestGradleVersion="${{ matrix.gradleVersion }}"
 
-  build:
-    name: Build
-    needs: test
-    runs-on: ubuntu-latest
-    outputs:
-      name: ${{ steps.properties.outputs.name }}
-      version: ${{ steps.properties.outputs.version }}
-      changelog: ${{ steps.properties.outputs.changelog }}
-      artifact: ${{ steps.properties.outputs.artifact }}
-    steps:
-
-      - name: Setup Java
-        uses: actions/setup-java@v2
+      - name: Collect Test Results
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v2
         with:
-          distribution: zulu
-          java-version: 8
-
-      - name: Fetch Sources
-        uses: actions/checkout@v2
-
-      - name: Setup Gradle Dependencies Cache
-        uses: actions/cache@v2.1.5
-        with:
-          path: ~/.gradle/caches
-          key: ${{ runner.os }}-gradle-caches-${{ hashFiles('**/*.gradle', '**/*.gradle.kts', 'gradle.properties') }}
-
-      - name: Setup Gradle Wrapper Cache
-        uses: actions/cache@v2.1.5
-        with:
-          path: ~/.gradle/wrapper
-          key: ${{ runner.os }}-gradle-wrapper-${{ hashFiles('**/gradle/wrapper/gradle-wrapper.properties') }}
+          name: test-results-${{ matrix.testFile }}-${{ matrix.gradleVersion }}-${{ runner.os }}
+          path: ${{ github.workspace }}/build/reports/tests/test/

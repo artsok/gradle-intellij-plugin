@@ -1,21 +1,17 @@
+@file:Suppress("UnstableApiUsage")
+
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 
+fun properties(key: String) = project.findProperty(key)?.toString()
+
 plugins {
-    kotlin("jvm") version "1.5.0"
+    kotlin("jvm") version "1.5.10"
     id("java-gradle-plugin")
     id("maven-publish")
-    id("com.gradle.plugin-publish") version "0.14.0"
+    id("com.gradle.plugin-publish") version "0.15.0"
     id("synapticloop.documentr") version "3.1.0"
     id("com.github.breadmoirai.github-release") version "2.2.12"
     id("org.jetbrains.changelog") version "1.1.2"
-}
-
-plugins.withType<JavaPlugin> {
-    tasks {
-        withType<KotlinCompile> {
-            kotlinOptions.jvmTarget = "1.8"
-        }
-    }
 }
 
 repositories {
@@ -24,11 +20,11 @@ repositories {
 }
 
 dependencies {
-    api(gradleApi())
     implementation("org.jetbrains:marketplace-zip-signer:0.1.3")
-    implementation("org.jetbrains:annotations:20.1.0")
-    implementation("org.jetbrains.intellij.plugins:structure-base:3.177")
-    implementation("org.jetbrains.intellij.plugins:structure-intellij:3.177")
+    implementation("org.jetbrains:annotations:21.0.0")
+    implementation("org.jetbrains.intellij.plugins:structure-base:3.182")
+    implementation("org.jetbrains.intellij.plugins:structure-intellij:3.182")
+    implementation("javax.xml.bind:jaxb-api:2.3.1")
     // should be changed together with plugin-repository-rest-client
     implementation("org.jetbrains.intellij:blockmap:1.0.5") {
         exclude(group = "org.jetbrains.kotlin")
@@ -36,24 +32,21 @@ dependencies {
     implementation("org.jetbrains.intellij:plugin-repository-rest-client:2.0.17") {
         exclude(group = "org.jetbrains.kotlin")
     }
-    implementation("de.undercouch:gradle-download-task:4.1.1")
-    implementation("com.fasterxml.jackson.dataformat:jackson-dataformat-xml:2.12.3")
-    implementation("com.fasterxml.jackson.module:jackson-module-kotlin:2.12.3")
-    implementation("com.fasterxml.woodstox:woodstox-core:6.2.6")
 
     testImplementation(gradleTestKit())
     testImplementation(kotlin("test"))
     testImplementation(kotlin("test-junit"))
 }
 
-version = if (project.property("snapshot")?.toString()?.toBoolean() == true) {
-    "${project.property("snapshotVersion")}-SNAPSHOT"
-} else {
-    project.property("version").toString()
-}
+version = when (properties("snapshot")?.toBoolean() ?: false) {
+    true -> "${properties("snapshotVersion")}-SNAPSHOT"
+    false -> properties("version")
+} ?: ""
 group = "org.jetbrains.intellij.plugins"
 description = """
-**This project requires Gradle 5.1 or newer**
+**This project requires Gradle 6.6 or newer**
+
+For migration guide to the 1.0 version, visit: https://lp.jetbrains.com/gradle-intellij-plugin
 
 This plugin allows you to build plugins for IntelliJ Platform using specified IntelliJ SDK and bundled/3rd-party plugins.
 
@@ -84,10 +77,24 @@ val cacheIntolerantTest = tasks.register<Test>("cacheIntolerantTest") {
     filter.isFailOnNoMatchingTests = false
 }
 
-tasks.test {
-    configureTests(this)
-    exclude("**/DownloadIntelliJSpec.class")
-    dependsOn(cacheIntolerantTest)
+tasks {
+    withType<KotlinCompile> {
+        kotlinOptions {
+            jvmTarget = "1.8"
+            apiVersion = "1.3"
+        }
+    }
+
+    wrapper {
+        gradleVersion = "7.0.2"
+        distributionUrl = "https://cache-redirector.jetbrains.com/services.gradle.org/distributions/gradle-$gradleVersion-all.zip"
+    }
+
+    test {
+        configureTests(this)
+        exclude("**/DownloadIntelliJSpec.class")
+        dependsOn(cacheIntolerantTest)
+    }
 }
 
 fun configureTests(testTask: Test) {
@@ -96,7 +103,8 @@ fun configureTests(testTask: Test) {
         File(testGradleHomePath).mkdir()
     }
     testTask.systemProperties["test.gradle.home"] = testGradleHomePath
-    testTask.systemProperties["plugins.repository"] = project.property("pluginsRepository")
+    testTask.systemProperties["test.gradle.version"] = properties("testGradleVersion")
+    testTask.systemProperties["plugins.repository"] = properties("pluginsRepository")
     testTask.outputs.dir(testGradleHomePath)
 }
 
@@ -116,8 +124,8 @@ publishing {
             name = "snapshot"
             url = uri("https://oss.sonatype.org/content/repositories/snapshots/")
             credentials {
-                username = project.property("ossrhUsername") as String
-                password = project.property("ossrhPassword") as String
+                username = properties("ossrhUsername")
+                password = properties("ossrhPassword")
             }
         }
     }
@@ -163,11 +171,6 @@ publishing {
     }
 }
 
-tasks.wrapper {
-    gradleVersion = "6.8"
-    distributionUrl = "https://cache-redirector.jetbrains.com/services.gradle.org/distributions/gradle-${gradleVersion}-all.zip"
-}
-
 changelog {
     version = "${project.version}"
     path = "${project.projectDir}/CHANGES.md"
@@ -180,7 +183,7 @@ githubRelease {
         ""
     }
 
-    setToken(project.property("githubToken") as String)
+    setToken(properties("githubToken"))
     owner.set("jetbrains")
     repo.set("gradle-intellij-plugin")
     body.set(releaseNote)
